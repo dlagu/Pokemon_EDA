@@ -1,0 +1,190 @@
+---
+title: "Pokemon Battle Info"
+author: "Daven Lagu"
+date: "2024-06-26"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(jsonlite)
+library(purrr)
+```
+
+```{r}
+json_url <- "https://www.smogon.com/stats/2024-05/chaos/gen9ou-1695.json"
+
+json_data <- fromJSON(json_url)
+
+```
+
+```{r}
+pkmn_data <- json_data$data
+
+result_list <- list()
+
+# Loop through each Pokémon and extract the relevant information
+for (pokemon_name in names(pkmn_data)) {
+  pokemon_info <- pkmn_data[[pokemon_name]]
+  usage <- pokemon_info$usage
+  
+# Extract abilities names
+  abilities_info <- pokemon_info$Abilities
+  if (length(abilities_info) > 0) {
+    abilities <- paste(names(abilities_info), collapse = ", ")
+  } else {
+    abilities <- NA
+  }
+  
+  # Extract move names
+  moves_info <- pokemon_info$Moves
+  if (length(moves_info) > 0) {
+    moves <- paste(names(moves_info), collapse = ", ")
+  } else {
+    moves <- NA
+  }
+
+  result_list[[pokemon_name]] <- data.frame(
+    Pokemon = pokemon_name,
+    Usage = usage,
+    Abilities = abilities,
+    Moves = moves,
+    stringsAsFactors = FALSE
+  )
+}
+
+
+# Combine the list of data frames into one data frame
+df <- bind_rows(result_list)
+
+# Print the resulting data frame
+print(df)
+
+```
+
+```{r}
+pkmn_stats <- read.csv("pokemons2.csv")
+
+pkmn_stats <- select(pkmn_stats, -(abilities))
+pkmn_stats <- select(pkmn_stats, -(evolves_from))
+pkmn_stats <- select(pkmn_stats, -(desc))
+                     
+head(pkmn_stats)
+```
+
+```{r}
+# Convert both name columns to lowercase for case-insensitive matching
+pkmn_stats$name <- tolower(pkmn_stats$name)
+df$Pokemon <- tolower(df$Pokemon)
+
+# Replace spaces with dashes in df$Pokemon
+df$Pokemon <- gsub(" ", "-", df$Pokemon)
+
+# Merge based on the 'name' (now lowercase) column
+merged_df <- merge(df, pkmn_stats, by.x = "Pokemon", by.y = "name", all.x = TRUE)
+
+# Print the resulting merged data frame
+print(merged_df)
+```
+
+
+```{r}
+pkmn_df <- merged_df %>%
+  mutate(Pokemon = str_to_title(Pokemon),
+         Usage = Usage * 100) %>%
+  arrange(desc(Usage))
+
+#pkmn_df <- pkmn_df[, c("Pokemon", "Usage", "Abilities", "Moves")]
+
+
+print(pkmn_df,10)
+```
+```{r}
+# Assuming your dataframe is named 'df'
+rows_with_na <- pkmn_df[apply(is.na(pkmn_df), 1, any), ]
+
+# Print the rows with NAs
+print(rows_with_na)
+```
+
+```{r}
+pkmn_df_filt <- na.omit(pkmn_df)
+head(pkmn_df_filt)
+
+par(mfrow=c(3,3))
+pkmn_df_filt %>%
+  ggplot(aes(x = hp, y=Usage, colour = total)) +
+  geom_point() +
+  scale_colour_gradient(low="red", high="darkblue") +
+  xlab("HP") +
+  ylab("Usage") +
+  ggtitle("Pokemon HP vs Usage") +
+  theme_bw()
+
+pkmn_df_filt %>%
+  ggplot(aes(x = atk, y=Usage, colour = total)) +
+  geom_point() +
+  scale_colour_gradient(low="red", high="darkblue") +
+  xlab("Atk") +
+  ylab("Usage") +
+  ggtitle("Pokemon Atk vs Usage") +
+  theme_bw()
+
+pkmn_df_filt %>%
+  ggplot(aes(x = def, y=Usage, colour = total)) +
+  geom_point() +
+  scale_colour_gradient(low="red", high="darkblue") +
+  xlab("Def") +
+  ylab("Usage") +
+  ggtitle("Pokemon Def vs Usage") +
+  theme_bw()
+
+pkmn_df_filt %>%
+  ggplot(aes(x = spatk, y=Usage, colour = total)) +
+  geom_point() +
+  scale_colour_gradient(low="red", high="darkblue") +
+  xlab("Sp. Atk") +
+  ylab("Usage") +
+  ggtitle("Pokemon Sp. Atk vs Usage") +
+  theme_bw()
+
+pkmn_df_filt %>%
+  ggplot(aes(x = spdef, y=Usage, colour = total)) +
+  geom_point() +
+  scale_colour_gradient(low="red", high="darkblue") +
+  xlab("Sp. Def") +
+  ylab("Usage") +
+  ggtitle("Pokemon Sp. Def vs Usage") +
+  theme_bw()
+
+pkmn_df_filt %>%
+  ggplot(aes(x = speed, y=Usage, colour = total)) +
+  geom_point() +
+  scale_colour_gradient(low="red", high="darkblue") +
+  xlab("Speed") +
+  ylab("Usage") +
+  ggtitle("Pokemon Speed vs Usage") +
+  theme_bw()
+
+pkmn_df_filt %>%
+  ggplot(aes(x = total, y=Usage)) +
+  geom_point() +
+  xlab("Total") +
+  ylab("Usage") +
+  ggtitle("Pokemon Total vs Usage") +
+  theme_bw()
+```
+
+```{r}
+arrange(pkmn_df_filt, desc(hp))
+arrange(pkmn_df_filt, desc(atk))
+arrange(pkmn_df_filt, desc(def))
+arrange(pkmn_df_filt, desc(spatk))
+arrange(pkmn_df_filt, desc(spdef))
+arrange(pkmn_df_filt, desc(speed))
+arrange(pkmn_df_filt, desc(total))
+```
+
+
