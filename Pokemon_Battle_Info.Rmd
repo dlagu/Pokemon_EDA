@@ -93,31 +93,44 @@ print(merged_df)
 ```{r}
 pkmn_df <- merged_df %>%
   mutate(Pokemon = str_to_title(Pokemon),
-         Usage = Usage * 100) %>%
-  arrange(desc(Usage))
+         Usage_Percent = Usage * 100,
+         Typing = apply(select(., type1, type2), 
+                                  1, function(x) paste(sort(x), collapse = "/")),
+         isMonotype = ifelse(type1 == "None" | type2 == "None", 1, 0)) %>%
+  arrange(desc(Usage)) %>%
+  mutate(Typing = as.factor(Typing))
+
 
 #pkmn_df <- pkmn_df[, c("Pokemon", "Usage", "Abilities", "Moves")]
 
 
 print(pkmn_df,10)
 ```
+
 ```{r}
 # Assuming your dataframe is named 'df'
 rows_with_na <- pkmn_df[apply(is.na(pkmn_df), 1, any), ]
 
 # Print the rows with NAs
 print(rows_with_na)
+
+pkmn_df_filt <- na.omit(pkmn_df)
+head(pkmn_df_filt)
 ```
 
 ```{r}
-pkmn_df_filt <- na.omit(pkmn_df)
-head(pkmn_df_filt)
+pkmn_df_filt %>%
+  arrange(desc(total))
 
-par(mfrow=c(3,3))
+pkmn_df_filt  
+```
+
+
+```{r}
 pkmn_df_filt %>%
   ggplot(aes(x = hp, y=Usage, colour = total)) +
-  geom_point() +
-  scale_colour_gradient(low="red", high="darkblue") +
+  geom_point(size = 3) +
+  scale_colour_gradient(low="red", high="blue") +
   xlab("HP") +
   ylab("Usage") +
   ggtitle("Pokemon HP vs Usage") +
@@ -125,8 +138,8 @@ pkmn_df_filt %>%
 
 pkmn_df_filt %>%
   ggplot(aes(x = atk, y=Usage, colour = total)) +
-  geom_point() +
-  scale_colour_gradient(low="red", high="darkblue") +
+  geom_point(size = 3) +
+  scale_colour_gradient(low="red", high="blue") +
   xlab("Atk") +
   ylab("Usage") +
   ggtitle("Pokemon Atk vs Usage") +
@@ -134,8 +147,8 @@ pkmn_df_filt %>%
 
 pkmn_df_filt %>%
   ggplot(aes(x = def, y=Usage, colour = total)) +
-  geom_point() +
-  scale_colour_gradient(low="red", high="darkblue") +
+  geom_point(size = 3) +
+  scale_colour_gradient(low="red", high="blue") +
   xlab("Def") +
   ylab("Usage") +
   ggtitle("Pokemon Def vs Usage") +
@@ -143,8 +156,8 @@ pkmn_df_filt %>%
 
 pkmn_df_filt %>%
   ggplot(aes(x = spatk, y=Usage, colour = total)) +
-  geom_point() +
-  scale_colour_gradient(low="red", high="darkblue") +
+  geom_point(size = 3) +
+  scale_colour_gradient(low="red", high="blue") +
   xlab("Sp. Atk") +
   ylab("Usage") +
   ggtitle("Pokemon Sp. Atk vs Usage") +
@@ -152,8 +165,8 @@ pkmn_df_filt %>%
 
 pkmn_df_filt %>%
   ggplot(aes(x = spdef, y=Usage, colour = total)) +
-  geom_point() +
-  scale_colour_gradient(low="red", high="darkblue") +
+  geom_point(size = 3) +
+  scale_colour_gradient(low="red", high="blue") +
   xlab("Sp. Def") +
   ylab("Usage") +
   ggtitle("Pokemon Sp. Def vs Usage") +
@@ -161,8 +174,8 @@ pkmn_df_filt %>%
 
 pkmn_df_filt %>%
   ggplot(aes(x = speed, y=Usage, colour = total)) +
-  geom_point() +
-  scale_colour_gradient(low="red", high="darkblue") +
+  geom_point(size = 3) +
+  scale_colour_gradient(low="red", high="blue") +
   xlab("Speed") +
   ylab("Usage") +
   ggtitle("Pokemon Speed vs Usage") +
@@ -178,13 +191,33 @@ pkmn_df_filt %>%
 ```
 
 ```{r}
-arrange(pkmn_df_filt, desc(hp))
-arrange(pkmn_df_filt, desc(atk))
-arrange(pkmn_df_filt, desc(def))
-arrange(pkmn_df_filt, desc(spatk))
-arrange(pkmn_df_filt, desc(spdef))
-arrange(pkmn_df_filt, desc(speed))
-arrange(pkmn_df_filt, desc(total))
+#arrange(pkmn_df_filt, desc(hp))
+#arrange(pkmn_df_filt, desc(atk))
+#arrange(pkmn_df_filt, desc(def))
+#arrange(pkmn_df_filt, desc(spatk))
+#arrange(pkmn_df_filt, desc(spdef))
+#arrange(pkmn_df_filt, desc(speed))
+#arrange(pkmn_df_filt, desc(total))
+#sapply(pkmn_df_filt[, c("Usage", "hp", "atk", "def", "spatk", "spdef", "speed", "total", "height", "weight")], length)
 ```
 
+```{r}
+pkmn_usage_lm <- lm(Usage ~ hp + atk + def + spatk + spdef + speed + Typing + as.factor(generation) + as.factor(rank) + height + weight, data = pkmn_df_filt)
+summary(pkmn_usage_lm)
+```
+
+```{r}
+library(lme4)
+pkmn_usage_lm_interact <- glmer(Usage ~ 1 + hp + atk + def + spatk + spdef + speed +
+                                  (0 + hp | total) +
+                                  (0 + atk | total) +
+                                  (0 + def | total) +
+                                  (0 + spatk | total) +
+                                  (0 + spdef | total) +
+                                  (0 + speed | total), 
+                                data = pkmn_df_filt, family = gaussian(link = identity))
+
+# Print summary of the model
+summary(pkmn_usage_lm_interact)
+```
 
