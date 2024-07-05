@@ -1,0 +1,162 @@
+---
+title: "Pokemon_Moves"
+author: "Daven Lagu"
+date: "2024-07-05"
+output: pdf_document
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(xgboost)
+library(jsonlite)
+library(purrr)
+
+json_url <- "https://www.smogon.com/stats/2024-05/chaos/gen9ou-1695.json"
+
+json_data <- fromJSON(json_url)
+
+pkmn_data <- json_data$data
+```
+
+
+```{r}
+# 2024-05
+moves_df <- data.frame(Name = character(), Move = character(), Move_Usage = numeric(), stringsAsFactors = FALSE)
+abilities_df <- data.frame(Name = character(), Ability = character(), Ability_Usage = numeric(), stringsAsFactors = FALSE)
+teammates_df <- data.frame(Name = character(), Teammate = character(), Teammate_Usage = numeric(), stringsAsFactors = FALSE)
+spreads_df <- data.frame(Name = character(), Spread = character(), Spread_Usage = numeric(), stringsAsFactors = FALSE)
+items_df <- data.frame(Name = character(), Item = character(), Item_Usage = numeric(), stringsAsFactors = FALSE)
+
+# Function to extract and append data to the respective dataframes
+append_pokemon_data <- function(pokemon_name, pokemon_data) {
+  # Moves
+  if (!is.null(pokemon_data$Moves)) {
+    moves <- data.frame(Name = pokemon_name, 
+                        Move = names(pokemon_data$Moves), 
+                        Move_Usage = unlist(pokemon_data$Moves), 
+                        stringsAsFactors = FALSE)
+    moves_df <<- rbind(moves_df, moves)
+  }
+  
+  # Abilities
+  if (!is.null(pokemon_data$Abilities)) {
+    abilities <- data.frame(Name = pokemon_name, 
+                            Ability = names(pokemon_data$Abilities), 
+                            Ability_Usage = unlist(pokemon_data$Abilities), 
+                            stringsAsFactors = FALSE)
+    abilities_df <<- rbind(abilities_df, abilities)
+  }
+  
+  # Teammates
+  if (!is.null(pokemon_data$Teammates)) {
+    teammates <- data.frame(Name = pokemon_name, 
+                            Teammate = names(pokemon_data$Teammates), 
+                            Teammate_Usage = unlist(pokemon_data$Teammates), 
+                            stringsAsFactors = FALSE)
+    teammates_df <<- rbind(teammates_df, teammates)
+  }
+  
+  # Spreads
+  if (!is.null(pokemon_data$Spreads)) {
+    spreads <- data.frame(Name = pokemon_name, 
+                          Spread = names(pokemon_data$Spreads), 
+                          Spread_Usage = unlist(pokemon_data$Spreads), 
+                          stringsAsFactors = FALSE)
+    spreads_df <<- rbind(spreads_df, spreads)
+  }
+  
+  # Items
+  if (!is.null(pokemon_data$Items)) {
+    items <- data.frame(Name = pokemon_name, 
+                        Item = names(pokemon_data$Items), 
+                        Item_Usage = unlist(pokemon_data$Items), 
+                        stringsAsFactors = FALSE)
+    items_df <<- rbind(items_df, items)
+  }
+}
+
+# Loop through all Pokémon in the data
+for (pokemon_name in names(json_data$data)) {
+  pokemon_data <- json_data$data[[pokemon_name]]
+  append_pokemon_data(pokemon_name, pokemon_data)
+}
+
+# Reset row names
+row.names(moves_df) <- NULL
+row.names(abilities_df) <- NULL
+row.names(teammates_df) <- NULL
+row.names(spreads_df) <- NULL
+row.names(items_df) <- NULL
+
+# Viewing the dataframes
+print(head(abilities_df))
+print(head(moves_df))
+print(head(teammates_df))
+print(head(spreads_df))
+print(head(items_df))
+```
+
+```{r}
+# Convert both name columns to lowercase for case-insensitive matching
+moves$name <- tolower(moves$identifier)
+
+# Replace spaces with dashes in df$Pokemon
+moves$name <- gsub("-", "", moves$name)
+
+# Filter moves to only pokemon moves in moves_df
+merged_moves <- left_join(moves_df, moves, by = join_by(Move == name))
+head(merged_moves)
+
+# Merge based on the 'name' (now lowercase) column
+#merged_df <- merge(df, pkmn_stats, by.x = "Pokemon", by.y = "name", all.x = TRUE)
+
+# Print the resulting merged data frame
+print(merged_moves)
+```
+
+```{r}
+filtered_moves <- merged_moves %>%
+  select(Name, Move, Move_Usage, generation_id, type_id, power, pp, accuracy, priority, target_id, damage_class_id, effect_id, effect_chance) %>%
+  mutate(damage_class = case_when(
+    damage_class_id == 1 ~ "status",
+    damage_class_id == 2 ~ "physical",
+    damage_class_id == 3 ~ "special")) %>%
+  mutate(move_typing = case_when(
+    type_id == 1 ~ "normal",
+    type_id == 2 ~ "fighting",
+    type_id == 3 ~ "flying",
+    type_id == 4 ~ "poison",
+    type_id == 5 ~ "ground",
+    type_id == 6 ~ "rock",
+    type_id == 7 ~ "bug",
+    type_id == 8 ~ "ghost",
+    type_id == 9 ~ "steel",
+    type_id == 10 ~ "fire",
+    type_id == 11 ~ "water",
+    type_id == 12 ~ "grass",
+    type_id == 13 ~ "electric",
+    type_id == 14 ~ "psychic",
+    type_id == 15 ~ "ice",
+    type_id == 16 ~ "dragon",
+    type_id == 17 ~ "dark",
+    type_id == 18 ~ "fairy",
+    type_id == 19 ~ "stellar")) %>%
+  mutate(power = replace_na(power, 0),
+         accuracy = replace_na(accuracy, 100)) %>%
+  drop_na(damage_class_id)
+
+head(filtered_moves)
+```
+
+```{r}
+physical_moves_df <- filtered_moves %>%
+  filter(damage_class == "physical")
+
+special_moves_df <- filtered_moves %>%
+  filter(damage_class == "special")
+
+status_moves_df <- filtered_moves %>%
+  filter(damage_class == "status")
+```
+
