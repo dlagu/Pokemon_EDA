@@ -7,15 +7,18 @@ output: pdf_document
 
 ```{r}
 library(dplyr)
+library(httr)
+library(tidyverse)
 library(tidyr)
 library(xgboost)
 library(jsonlite)
 library(purrr)
+library(readr)
+library(stringr)
 
+# Extract JSON data from chosen tier and time
 json_url <- "https://www.smogon.com/stats/2024-05/chaos/gen9ou-1695.json"
-
 json_data <- fromJSON(json_url)
-
 pkmn_data <- json_data$data
 ```
 
@@ -23,10 +26,6 @@ pkmn_data <- json_data$data
 ```{r}
 # 2024-05
 moves_df <- data.frame(Name = character(), Move = character(), Move_Usage = numeric(), stringsAsFactors = FALSE)
-abilities_df <- data.frame(Name = character(), Ability = character(), Ability_Usage = numeric(), stringsAsFactors = FALSE)
-teammates_df <- data.frame(Name = character(), Teammate = character(), Teammate_Usage = numeric(), stringsAsFactors = FALSE)
-spreads_df <- data.frame(Name = character(), Spread = character(), Spread_Usage = numeric(), stringsAsFactors = FALSE)
-items_df <- data.frame(Name = character(), Item = character(), Item_Usage = numeric(), stringsAsFactors = FALSE)
 
 # Function to extract and append data to the respective dataframes
 append_pokemon_data <- function(pokemon_name, pokemon_data) {
@@ -38,42 +37,6 @@ append_pokemon_data <- function(pokemon_name, pokemon_data) {
                         stringsAsFactors = FALSE)
     moves_df <<- rbind(moves_df, moves)
   }
-  
-  # Abilities
-  if (!is.null(pokemon_data$Abilities)) {
-    abilities <- data.frame(Name = pokemon_name, 
-                            Ability = names(pokemon_data$Abilities), 
-                            Ability_Usage = unlist(pokemon_data$Abilities), 
-                            stringsAsFactors = FALSE)
-    abilities_df <<- rbind(abilities_df, abilities)
-  }
-  
-  # Teammates
-  if (!is.null(pokemon_data$Teammates)) {
-    teammates <- data.frame(Name = pokemon_name, 
-                            Teammate = names(pokemon_data$Teammates), 
-                            Teammate_Usage = unlist(pokemon_data$Teammates), 
-                            stringsAsFactors = FALSE)
-    teammates_df <<- rbind(teammates_df, teammates)
-  }
-  
-  # Spreads
-  if (!is.null(pokemon_data$Spreads)) {
-    spreads <- data.frame(Name = pokemon_name, 
-                          Spread = names(pokemon_data$Spreads), 
-                          Spread_Usage = unlist(pokemon_data$Spreads), 
-                          stringsAsFactors = FALSE)
-    spreads_df <<- rbind(spreads_df, spreads)
-  }
-  
-  # Items
-  if (!is.null(pokemon_data$Items)) {
-    items <- data.frame(Name = pokemon_name, 
-                        Item = names(pokemon_data$Items), 
-                        Item_Usage = unlist(pokemon_data$Items), 
-                        stringsAsFactors = FALSE)
-    items_df <<- rbind(items_df, items)
-  }
 }
 
 # Loop through all Pokémon in the data
@@ -84,79 +47,316 @@ for (pokemon_name in names(json_data$data)) {
 
 # Reset row names
 row.names(moves_df) <- NULL
-row.names(abilities_df) <- NULL
-row.names(teammates_df) <- NULL
-row.names(spreads_df) <- NULL
-row.names(items_df) <- NULL
 
 # Viewing the dataframes
-print(head(abilities_df))
 print(head(moves_df))
-print(head(teammates_df))
-print(head(spreads_df))
-print(head(items_df))
 ```
 
 ```{r}
-# Convert both name columns to lowercase for case-insensitive matching
+# Add Info to Move Usage by Pokemon 
+# Get move data (power, damage class, effect description, etc.)
+moves <- read_csv("moves.csv")
+
+# Convert name column to lowercase for case-insensitive matching
 moves$name <- tolower(moves$identifier)
 
-# Replace spaces with dashes in df$Pokemon
+# Replace spaces with dashes
 moves$name <- gsub("-", "", moves$name)
 
 # Filter moves to only pokemon moves in moves_df
 merged_moves <- left_join(moves_df, moves, by = join_by(Move == name))
+merged_moves <- distinct(merged_moves)
 head(merged_moves)
 
-# Merge based on the 'name' (now lowercase) column
-#merged_df <- merge(df, pkmn_stats, by.x = "Pokemon", by.y = "name", all.x = TRUE)
+# Add Pokemon ID
+pkmn_species <- read.csv("pokemon_species_names.csv")
+pkmn_species <- select(pkmn_species, c(pokemon_species_id, name))
+pkmn_forms <- read_csv("pokemon_forms.csv")
+pkmn_forms <- select(pkmn_forms, c(id, identifier))
+
+# Transform the identifier column
+pkmn_forms <- pkmn_forms %>%
+  mutate(identifier = str_replace_all(identifier, "-", " - ")) %>%  # Add spaces around hyphens
+  mutate(identifier = str_to_title(identifier)) %>%                # Capitalize each word
+  mutate(identifier = str_replace_all(identifier, " - ", "-"))     # Remove spaces around hyphens
+
+# Filter pkmn_forms to keep only the rows where the identifier is not in the name column of pkmn_species
+pkmn_forms_filtered <- pkmn_forms %>%
+  filter(!(identifier %in% pkmn_species$name))
+
+# Add a new column to pkmn_forms_filtered to match pkmn_species' column names
+pkmn_forms_filtered <- pkmn_forms_filtered %>%
+  rename(pokemon_species_id = id, name = identifier)
+
+# Combine to get Pokemon id and names
+combined_pkmn <- bind_rows(pkmn_species, pkmn_forms_filtered)
+combined_pkmn <- distinct(combined_pkmn)
+
+# Add Pokemon ids to dataframe
+merged_moves <- left_join(merged_moves, combined_pkmn, by = join_by(Name == name))
+
+# Add typings to Pokemon 
+pkmn_typings <- read.csv("pokemon_types.csv")
+
+# Transform data to get 2 columns type1 and type2 with type ids
+pokemon_types_transformed <- pkmn_typings %>%
+  group_by(pokemon_id) %>%
+  summarize(
+    type1 = type_id[1],
+    type2 = ifelse(length(type_id) > 1, type_id[2], NA)) %>%
+  ungroup()
+
+# Add type1,type2 columns to dataframe
+merged_moves <- left_join(merged_moves, pokemon_types_transformed, by = join_by(pokemon_species_id == pokemon_id))
+
+# Add move effect definitions
+pkmn_move_effects <- read.csv("move_effect_prose.csv")
+pkmn_move_effects <- select(pkmn_move_effects, c(move_effect_id, short_effect))
+merged_moves <- left_join(merged_moves, pkmn_move_effects, by = join_by(effect_id == move_effect_id))
 
 # Print the resulting merged data frame
 print(merged_moves)
+
 ```
 
 ```{r}
+# Check for duplicate Name values in merged_moves
+duplicate_names_in_merged_moves <- merged_moves %>%
+  group_by(Name) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+# Check for duplicate Name values in combined_pkmn
+duplicate_names_in_combined_pkmn <- combined_pkmn %>%
+  group_by(name) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+# Print the duplicate Names
+print(duplicate_names_in_merged_moves)
+print(duplicate_names_in_combined_pkmn)
+
+```
+
+
+```{r}
 filtered_moves <- merged_moves %>%
-  select(Name, Move, Move_Usage, generation_id, type_id, power, pp, accuracy, priority, target_id, damage_class_id, effect_id, effect_chance) %>%
+  select(Name, pokemon_species_id, Move, Move_Usage, generation_id, type_id, power, pp, accuracy, priority, target_id, damage_class_id, effect_id, effect_chance, type1, type2, short_effect) %>%
   mutate(damage_class = case_when(
     damage_class_id == 1 ~ "status",
     damage_class_id == 2 ~ "physical",
-    damage_class_id == 3 ~ "special")) %>%
-  mutate(move_typing = case_when(
-    type_id == 1 ~ "normal",
-    type_id == 2 ~ "fighting",
-    type_id == 3 ~ "flying",
-    type_id == 4 ~ "poison",
-    type_id == 5 ~ "ground",
-    type_id == 6 ~ "rock",
-    type_id == 7 ~ "bug",
-    type_id == 8 ~ "ghost",
-    type_id == 9 ~ "steel",
-    type_id == 10 ~ "fire",
-    type_id == 11 ~ "water",
-    type_id == 12 ~ "grass",
-    type_id == 13 ~ "electric",
-    type_id == 14 ~ "psychic",
-    type_id == 15 ~ "ice",
-    type_id == 16 ~ "dragon",
-    type_id == 17 ~ "dark",
-    type_id == 18 ~ "fairy",
-    type_id == 19 ~ "stellar")) %>%
-  mutate(power = replace_na(power, 0),
-         accuracy = replace_na(accuracy, 100)) %>%
-  drop_na(damage_class_id)
+    damage_class_id == 3 ~ "special"),
+    type1 = case_when(
+      type1 == 1 ~ "normal",
+      type1 == 2 ~ "fighting",
+      type1 == 3 ~ "flying",
+      type1 == 4 ~ "poison",
+      type1 == 5 ~ "ground",
+      type1 == 6 ~ "rock",
+      type1 == 7 ~ "bug",
+      type1 == 8 ~ "ghost",
+      type1 == 9 ~ "steel",
+      type1 == 10 ~ "fire",
+      type1 == 11 ~ "water",
+      type1 == 12 ~ "grass",
+      type1 == 13 ~ "electric",
+      type1 == 14 ~ "psychic",
+      type1 == 15 ~ "ice",
+      type1 == 16 ~ "dragon",
+      type1 == 17 ~ "dark",
+      type1 == 18 ~ "fairy",
+      type1 == 19 ~ "stellar"),
+    type2 = case_when(
+      type2 == 1 ~ "normal",
+      type2 == 2 ~ "fighting",
+      type2 == 3 ~ "flying",
+      type2 == 4 ~ "poison",
+      type2 == 5 ~ "ground",
+      type2 == 6 ~ "rock",
+      type2 == 7 ~ "bug",
+      type2 == 8 ~ "ghost",
+      type2 == 9 ~ "steel",
+      type2 == 10 ~ "fire",
+      type2 == 11 ~ "water",
+      type2 == 12 ~ "grass",
+      type2 == 13 ~ "electric",
+      type2 == 14 ~ "psychic",
+      type2 == 15 ~ "ice",
+      type2 == 16 ~ "dragon",
+      type2 == 17 ~ "dark",
+      type2 == 18 ~ "fairy",
+      type2 == 19 ~ "stellar"),
+    move_typing = case_when(
+      type_id == 1 ~ "normal",
+      type_id == 2 ~ "fighting",
+      type_id == 3 ~ "flying",
+      type_id == 4 ~ "poison",
+      type_id == 5 ~ "ground",
+      type_id == 6 ~ "rock",
+      type_id == 7 ~ "bug",
+      type_id == 8 ~ "ghost",
+      type_id == 9 ~ "steel",
+      type_id == 10 ~ "fire",
+      type_id == 11 ~ "water",
+      type_id == 12 ~ "grass",
+      type_id == 13 ~ "electric",
+      type_id == 14 ~ "psychic",
+      type_id == 15 ~ "ice",
+      type_id == 16 ~ "dragon",
+      type_id == 17 ~ "dark",
+      type_id == 18 ~ "fairy",
+      type_id == 19 ~ "stellar"),
+    target_class = case_when(
+      target_id == 1 ~ "Self_Counter",
+      target_id == 2 ~ "Me_First-Move",
+      target_id == 3 ~ "Ally",
+      target_id == 4 ~ "Users_Field",
+      target_id == 5 ~ "User_or_Ally",
+      target_id == 6 ~ "Opponents_Field_Hazards",
+      target_id == 7 ~ "User_NonDmg",
+      target_id == 8 ~ "User_Dmg",
+      target_id == 9 ~ "All_Other_Pokemon",
+      target_id == 10 ~ "Selected_Pokemon",
+      target_id == 11 ~ "All_Opponents",
+      target_id == 12 ~ "Entire_Field",
+      target_id == 13 ~ "User_and_Allies",
+      target_id == 14 ~ "All_Pokemon",
+      target_id == 15 ~ "All_Allies",
+      target_id == 16 ~ "Fainted_Party_Pokemon"))
 
+filtered_moves <- distinct(filtered_moves)
 head(filtered_moves)
 ```
 
 ```{r}
-physical_moves_df <- filtered_moves %>%
-  filter(damage_class == "physical")
+# Check to see if all Pokemon names were added correctly (ideally no names are excluded)
+excluded_pkmn <- filtered_moves %>%
+  filter(is.na(type1)) %>%
+  distinct(Name)
 
-special_moves_df <- filtered_moves %>%
-  filter(damage_class == "special")
+excluded_pkmn
+```
 
-status_moves_df <- filtered_moves %>%
-  filter(damage_class == "status")
+```{r}
+# Function to fetch excluded Pokémon data
+fetch_excluded_pokemon <- function(name) {
+  # Format the name to match PokeAPI naming conventions
+  name_formatted <- gsub(" ", "-", tolower(name))
+  url <- paste0("https://pokeapi.co/api/v2/pokemon/", name_formatted)
+  
+  response <- GET(url)
+  if (status_code(response) == 200) {
+    data <- content(response, as = "parsed", type = "application/json")
+    types <- data$types
+    type1 <- ifelse(length(types) > 0, types[[1]]$type$name, "None")
+    type2 <- ifelse(length(types) > 1, types[[2]]$type$name, "None")
+    return(data.frame(
+      Name = name,
+      pokemon_species_id = data$id,
+      type1 = type1,
+      type2 = type2,
+      stringsAsFactors = FALSE
+    ))
+  } else {
+    print(paste("Failed to fetch data for", name))
+    return(data.frame(
+      Name = name,
+      id = NA,
+      type1 = NA,
+      type2 = NA,
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+```
+
+
+```{r}
+# Add missing type data and/or ids for excluded Pokemon
+
+# NOTE: Most names are excluded due to naming conventions with regional or 
+# special forms or missing csv data and can be obtained automatically when running the 
+# fetch_excluded_pokemon function, but some naming conventions do not match 
+# between the Pokemon API and Smogon data, and will thus require a manual change 
+# to match the name in "https://pokeapi.co/api/v2/pokemon/" by applying the below code:
+
+# Manually change the names of Pokemon in dataframe to match Pokemon API names 
+excluded_pkmn <- excluded_pkmn %>%
+  mutate(
+    # Change names of all Pokemon with different Smogon/Pokemon API names
+    Name = ifelse(Name == "Ogerpon-Wellspring", "Ogerpon-Wellspring-Mask", Name),
+    Name = ifelse(Name == "Ogerpon-Cornerstone", "Ogerpon-Cornerstone-Mask", Name),
+    Name = ifelse(Name == "Basculegion-F", "Basculegion-Female", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Blaze", "Tauros-Paldea-Blaze-Breed", Name)
+  )
+
+# Fetch type data for each excluded Pokémon name
+excluded_data <- lapply(excluded_pkmn$Name, fetch_excluded_pokemon)
+excluded_data <- bind_rows(excluded_data)
+
+# Convert names back to Smogon names
+excluded_data <- excluded_data %>% 
+  mutate(
+    Name = ifelse(Name == "Ogerpon-Wellspring-Mask","Ogerpon-Wellspring", Name),
+    Name = ifelse(Name == "Ogerpon-Cornerstone-Mask", "Ogerpon-Cornerstone", Name),
+    Name = ifelse(Name == "Basculegion-Female", "Basculegion-F", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Blaze-Breed", "Tauros-Paldea-Blaze", Name)
+  )
+
+excluded_data
+```
+
+```{r}
+filtered_moves_updated <- filtered_moves %>%
+  left_join(excluded_data, by = c("Name" = "Name")) %>%
+  mutate(
+    pokemon_species_id = coalesce(pokemon_species_id.y, pokemon_species_id.x),  # Use excluded_data if not NA, else use original
+    type1 = ifelse(is.na(type1.y), type1.x, type1.y),  # Use excluded_data if not NA, else use original
+    type2 = ifelse(is.na(type2.y), type2.x, type2.y)   # Use excluded_data if not NA, else use original
+  ) %>%
+  select(-pokemon_species_id.x, -pokemon_species_id.y,
+         -type1.x, -type1.y,
+         -type2.x, -type2.y) %>%
+  mutate(power = replace_na(power, 0),
+         accuracy = replace_na(accuracy, 100),
+         type2 = replace_na(type2, "None"),
+         pokemon_typing = if_else(type2 == "None", type1, paste(type1, type2, sep = "/")),
+         isSTAB = ifelse((damage_class == "physical" | damage_class == "special") &
+                           (move_typing == type1 | move_typing == type2), 1, 0)) %>%
+  drop_na(damage_class_id)
+
+# View updated dataframe
+print(filtered_moves_updated)
+
+```
+
+
+
+
+```{r}
+pokemon_move_data <- filtered_moves_updated %>%
+  select(pokemon_species_id, Name, Move, Move_Usage, move_typing, isSTAB, damage_class, power, pp, accuracy, target_class, priority, short_effect, effect_chance) %>%
+  rename(ID = pokemon_species_id,
+         Move_Type = move_typing,
+         Category = damage_class,
+         Target = target_class,
+         Priority = priority,
+         Move_Effect_Description = short_effect)
+
+head(pokemon_move_data) 
+
+physical_moves_df <- pokemon_move_data %>%
+  filter(Category == "physical")
+
+special_moves_df <- pokemon_move_data %>%
+  filter(Category == "special")
+
+status_moves_df <- pokemon_move_data %>%
+  filter(Category == "status")
+
+pokemon_move_data %>%
+  filter(Name == "Arcanine-Hisui") %>%
+  arrange(desc(Move_Usage)) %>%
+  head(20)
 ```
 
