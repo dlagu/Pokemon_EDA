@@ -72,7 +72,7 @@ head(merged_moves)
 pkmn_species <- read.csv("pokemon_species_names.csv")
 pkmn_species <- select(pkmn_species, c(pokemon_species_id, name))
 pkmn_forms <- read_csv("pokemon_forms.csv")
-pkmn_forms <- select(pkmn_forms, c(id, identifier))
+pkmn_forms <- select(pkmn_forms, c(pokemon_id, identifier))
 
 # Transform the identifier column
 pkmn_forms <- pkmn_forms %>%
@@ -86,7 +86,7 @@ pkmn_forms_filtered <- pkmn_forms %>%
 
 # Add a new column to pkmn_forms_filtered to match pkmn_species' column names
 pkmn_forms_filtered <- pkmn_forms_filtered %>%
-  rename(pokemon_species_id = id, name = identifier)
+  rename(pokemon_species_id = pokemon_id, name = identifier)
 
 # Combine to get Pokemon id and names
 combined_pkmn <- bind_rows(pkmn_species, pkmn_forms_filtered)
@@ -115,15 +115,18 @@ pkmn_move_effects <- read.csv("move_effect_prose.csv")
 pkmn_move_effects <- select(pkmn_move_effects, c(move_effect_id, short_effect))
 merged_moves <- left_join(merged_moves, pkmn_move_effects, by = join_by(effect_id == move_effect_id))
 
+merged_moves <- merged_moves %>%
+  mutate(identifier = str_replace_all(identifier, "-", " ")) %>%
+  mutate(identifier = str_to_title(identifier))
+
 # Print the resulting merged data frame
 print(merged_moves)
-
 ```
 
 ```{r}
 # Filter dataframe to relevant columns, transform columns for ease of understanding
 filtered_moves <- merged_moves %>%
-  select(Name, pokemon_species_id, Move, Move_Usage, generation_id, type_id, power, pp, accuracy, priority, target_id, damage_class_id, effect_id, effect_chance, type1, type2, short_effect) %>%
+  select(Name, pokemon_species_id, identifier, Move_Usage, generation_id, type_id, power, pp, accuracy, priority, target_id, damage_class_id, effect_id, effect_chance, type1, type2, short_effect) %>%
   mutate(damage_class = case_when(
     damage_class_id == 1 ~ "status",
     damage_class_id == 2 ~ "physical",
@@ -204,7 +207,8 @@ filtered_moves <- merged_moves %>%
       target_id == 13 ~ "User_and_Allies",
       target_id == 14 ~ "All_Pokemon",
       target_id == 15 ~ "All_Allies",
-      target_id == 16 ~ "Fainted_Party_Pokemon"))
+      target_id == 16 ~ "Fainted_Party_Pokemon")) %>%
+  rename(Move = identifier)
 
 # Eliminate duplicate rows if they exist
 filtered_moves <- distinct(filtered_moves)
@@ -213,9 +217,9 @@ head(filtered_moves)
 ```
 
 ```{r}
-# Check to see if all Pokemon names were added correctly (ideally no names are excluded)
+# Check to see if all Pokemon names and IDs were added correctly (ideally no names are excluded)
 excluded_pkmn <- filtered_moves %>%
-  filter(is.na(type1)) %>%
+  filter(is.na(pokemon_species_id)) %>%
   distinct(Name)
 
 # Check list of excluded Pokemon
@@ -259,11 +263,9 @@ fetch_excluded_pokemon <- function(name) {
 ```{r}
 # Add missing type data and/or ids for excluded Pokemon
 
-# NOTE: Most names are excluded due to naming conventions with regional or 
-# special forms or missing csv data and can be obtained automatically when running the 
-# fetch_excluded_pokemon function, but some naming conventions do not match 
-# between the Pokemon API and Smogon data, and will thus require a manual change 
-# to match the name in "https://pokeapi.co/api/v2/pokemon/" by applying the below code:
+# NOTE: Some naming conventions do not match between the Pokemon API and Smogon 
+# data, and will thus require a manual adjustment to match the name in 
+# "https://pokeapi.co/api/v2/pokemon/" by applying the below code:
 
 # Manually change the names of Pokemon in dataframe to match Pokemon API names 
 excluded_pkmn <- excluded_pkmn %>%
@@ -324,6 +326,8 @@ print(filtered_moves_updated)
 # Select only relevant columns for analysis and rename for legibility
 pokemon_move_data <- filtered_moves_updated %>%
   select(pokemon_species_id, Name, Move, Move_Usage, move_typing, isSTAB, damage_class, power, pp, accuracy, target_class, priority, short_effect, effect_chance) %>%
+  mutate(move_typing = str_to_title(move_typing),
+         damage_class = str_to_title(damage_class)) %>%
   rename(ID = pokemon_species_id,
          Move_Type = move_typing,
          Category = damage_class,
@@ -346,7 +350,7 @@ status_moves_df <- pokemon_move_data %>%
 
 # Check data for specific Pokemon's move usage
 pokemon_move_data %>%
-  filter(Name == "Arcanine-Hisui") %>%
+  filter(Name == "Landorus-Therian") %>%
   arrange(desc(Move_Usage)) %>%
   head(20)
 ```
