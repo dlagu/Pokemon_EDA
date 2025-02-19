@@ -14,7 +14,7 @@ library(purrr)
 ```
 
 ```{r}
-json_url <- "https://www.smogon.com/stats/2024-05/chaos/gen9ou-1695.json"
+json_url <- "https://www.smogon.com/stats/2025-01/chaos/gen9ou-1695.json"
 
 json_data <- fromJSON(json_url)
 
@@ -104,7 +104,7 @@ pkmn_df <- merged_df %>%
 #pkmn_df <- pkmn_df[, c("Pokemon", "Usage", "Abilities", "Moves")]
 
 
-print(pkmn_df,10)
+print(pkmn_df,30)
 ```
 
 ```{r}
