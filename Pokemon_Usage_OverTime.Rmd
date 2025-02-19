@@ -1,0 +1,105 @@
+---
+title: "Pokemon_Usage_OverTime"
+author: "Daven Lagu"
+date: "2025-02-19"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(jsonlite)
+library(purrr)
+```
+
+```{r}
+json_url_list <- c("https://www.smogon.com/stats/2022-11/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2022-12/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2023-01/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2023-02/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2023-03/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2023-04/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2023-05/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2023-06/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2023-07/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2023-08/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2023-09/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2023-10/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2023-11/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2023-12/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2024-01/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2024-02/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2024-03/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2024-04/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2024-05/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2024-06/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2024-07/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2024-08/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2024-09/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2024-10/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2024-11/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2024-12/chaos/gen9ou-1695.json",
+                   "https://www.smogon.com/stats/2025-01/chaos/gen9ou-1695.json")
+
+```
+
+```{r}
+all_data <- list()
+
+for (i in seq_along(json_url_list)) {
+  
+  json_url <- json_url_list[i]
+  json_data <- fromJSON(json_url_list[i])
+  
+  pkmn_data <- json_data$data
+  
+  result_list <- list()
+  date_value <- str_extract(json_url, "\\d{4}-\\d{2}")
+  
+  # Loop through each Pokémon and extract the relevant information
+  for (pokemon_name in names(pkmn_data)) {
+    pokemon_info <- pkmn_data[[pokemon_name]]
+    usage <- pokemon_info$usage
+    
+    result_list[[pokemon_name]] <- data.frame(
+      Pokemon = pokemon_name,
+      Usage = usage,
+      Date = date_value,
+      stringsAsFactors = FALSE
+    )
+  }
+  # Combine the list of data frames into one data frame
+  all_data[[i]] <- bind_rows(result_list)
+}
+  
+pkmn_usage_ot_data <- bind_rows(all_data)
+
+  
+# Print the resulting data frame
+pkmn_usage_ot_data
+
+```
+
+```{r}
+dates <- unique(pkmn_usage_ot_data$Date)
+pkmn_recent_top_usage_names <- pkmn_usage_ot_data %>% filter(Date == tail(dates, 1)) %>% arrange(desc(Usage)) %>% head(10) %>% pull(Pokemon)
+
+pkmn_recent_top_usage_names
+
+pkmn_top10 <- pkmn_usage_ot_data %>%
+  filter(Pokemon %in% pkmn_recent_top_usage_names) %>%
+  mutate(Date = as.Date(paste0(Date, "-01"), format = "%Y-%m-%d"),
+         Pokemon = as.factor(Pokemon))
+
+pkmn_top10
+  
+ggplot(pkmn_top10, aes(x = Date, y = Usage, color = Pokemon, group = Pokemon)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  labs(title = "Gen 9 Pokémon Usage Over Time",
+       x = "Date",
+       y = "Usage",
+       color = "Pokémon")
+```
+
