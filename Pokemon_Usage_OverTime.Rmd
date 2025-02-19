@@ -45,19 +45,23 @@ json_url_list <- c("https://www.smogon.com/stats/2022-11/chaos/gen9ou-1695.json"
 ```
 
 ```{r}
+# Initialize empty list to append data
 all_data <- list()
 
+# Loop through all urls to get Pokemon names, usages, and dates
 for (i in seq_along(json_url_list)) {
   
+  # Get data for each json url in list
   json_url <- json_url_list[i]
   json_data <- fromJSON(json_url_list[i])
-  
+  # Extract pokemon data from json data type
   pkmn_data <- json_data$data
-  
+  # Initialize empty list to append values
   result_list <- list()
+  # Extract date from url string
   date_value <- str_extract(json_url, "\\d{4}-\\d{2}")
   
-  # Loop through each Pokémon and extract the relevant information
+  # Loop through each Pokémon data and extract the relevant information
   for (pokemon_name in names(pkmn_data)) {
     pokemon_info <- pkmn_data[[pokemon_name]]
     usage <- pokemon_info$usage
@@ -72,32 +76,34 @@ for (i in seq_along(json_url_list)) {
   # Combine the list of data frames into one data frame
   all_data[[i]] <- bind_rows(result_list)
 }
-  
+
+# Combine the list of all data into single data frame
 pkmn_usage_ot_data <- bind_rows(all_data)
-
   
-# Print the resulting data frame
+# Print the pokemon usage over time data frame for all data in time frame
 pkmn_usage_ot_data
-
 ```
 
 ```{r}
+# Create list of all unique dates
 dates <- unique(pkmn_usage_ot_data$Date)
+# Get names of current top 10 gen 9 OU pokemon by usage
 pkmn_recent_top_usage_names <- pkmn_usage_ot_data %>% filter(Date == tail(dates, 1)) %>% arrange(desc(Usage)) %>% head(10) %>% pull(Pokemon)
 
-pkmn_recent_top_usage_names
+# Print names of top 10 most used gen 9 pokemon in OU tier 
+print(pkmn_recent_top_usage_names)
 
+# Create data frame filtered to only top 10 most used and format Date/Pokemon data types 
 pkmn_top10 <- pkmn_usage_ot_data %>%
   filter(Pokemon %in% pkmn_recent_top_usage_names) %>%
   mutate(Date = as.Date(paste0(Date, "-01"), format = "%Y-%m-%d"),
          Pokemon = as.factor(Pokemon))
 
-pkmn_top10
-  
+# Create line plot showing Top 10 Gen 9 OU Pokemon usage over time
 ggplot(pkmn_top10, aes(x = Date, y = Usage, color = Pokemon, group = Pokemon)) +
   geom_line(size = 1) +
   geom_point(size = 2) +
-  labs(title = "Gen 9 Pokémon Usage Over Time",
+  labs(title = "Gen 9 OU Pokémon Usage Over Time",
        x = "Date",
        y = "Usage",
        color = "Pokémon")
