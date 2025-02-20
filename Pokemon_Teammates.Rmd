@@ -1,0 +1,534 @@
+---
+title: "Pokemon_Teammates"
+author: "Daven Lagu"
+date: "2024-07-10"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(httr)
+library(tidyverse)
+library(tidyr)
+library(xgboost)
+library(jsonlite)
+library(purrr)
+library(readr)
+library(stringr)
+```
+
+```{r}
+json_url <- "https://www.smogon.com/stats/2025-01/chaos/gen9ou-1695.json"
+
+json_data <- fromJSON(json_url)
+
+pkmn_data <- json_data$data
+
+teammates_df <- data.frame(Name = character(), Teammate = character(), Teammate_Usage = numeric(), stringsAsFactors = FALSE)
+
+# Function to extract and append data to the respective dataframes
+append_pokemon_data <- function(pokemon_name, pokemon_data) {
+  # Teammates
+  if (!is.null(pokemon_data$Teammates)) {
+    teammates <- data.frame(Name = pokemon_name, 
+                            Teammate = names(pokemon_data$Teammates), 
+                            Teammate_Usage = unlist(pokemon_data$Teammates), 
+                            stringsAsFactors = FALSE)
+    teammates_df <<- rbind(teammates_df, teammates)
+  }
+}
+
+# Loop through all Pokémon in the data
+for (pokemon_name in names(json_data$data)) {
+  pokemon_data <- json_data$data[[pokemon_name]]
+  append_pokemon_data(pokemon_name, pokemon_data)
+}
+
+# Reset row names
+row.names(teammates_df) <- NULL
+
+# Viewing the dataframe
+teammates_df
+```
+
+```{r}
+# Add Pokemon ID
+pkmn_species <- read.csv("pokemon_species_names.csv")
+pkmn_species <- select(pkmn_species, c(pokemon_species_id, name))
+pkmn_forms <- read_csv("pokemon_forms.csv")
+pkmn_forms <- select(pkmn_forms, c(pokemon_id, identifier))
+
+# Transform the identifier column
+pkmn_forms <- pkmn_forms %>%
+  mutate(identifier = str_replace_all(identifier, "-", " - ")) %>%  # Add spaces around hyphens
+  mutate(identifier = str_to_title(identifier)) %>%                # Capitalize each word
+  mutate(identifier = str_replace_all(identifier, " - ", "-"))     # Remove spaces around hyphens
+
+# Filter pkmn_forms to keep only the rows where the identifier is not in the name column of pkmn_species
+pkmn_forms_filtered <- pkmn_forms %>%
+  filter(!(identifier %in% pkmn_species$name))
+
+# Add a new column to pkmn_forms_filtered to match pkmn_species' column names
+pkmn_forms_filtered <- pkmn_forms_filtered %>%
+  rename(pokemon_species_id = pokemon_id, name = identifier)
+
+# Combine to get Pokemon id and names
+combined_pkmn <- bind_rows(pkmn_species, pkmn_forms_filtered)
+# Limit to distinct Pokemon names/ids
+combined_pkmn <- distinct(combined_pkmn)
+```
+
+```{r}
+# Add typings to Pokemon 
+pkmn_typings <- read.csv("pokemon_types.csv")
+
+# Transform data to get 2 columns type1 and type2 with type ids
+pokemon_types_transformed <- pkmn_typings %>%
+  group_by(pokemon_id) %>%
+  summarize(
+    type1 = type_id[1],
+    type2 = ifelse(length(type_id) > 1, type_id[2], NA)) %>%
+  ungroup()
+
+pokemon_x <- teammates_df %>%
+  select(Name) %>%
+  left_join(combined_pkmn, by = join_by(Name == name)) %>%
+  left_join(pokemon_types_transformed, by = join_by(pokemon_species_id == pokemon_id))
+
+pokemon_y <- teammates_df %>%
+  select(c(Teammate)) %>%
+  left_join(combined_pkmn, by = join_by(Teammate == name)) %>%
+  rename(teammate_species_id = pokemon_species_id) %>%
+  left_join(pokemon_types_transformed, by = join_by(teammate_species_id == pokemon_id)) %>%
+  rename(teammate_type1 = type1, teammate_type2 = type2)
+
+teammate_usage <- teammates_df %>%
+  select(Teammate_Usage)
+
+head(pokemon_x)
+head(pokemon_y)
+head(teammate_usage)
+
+# merged_teammates <- cbind(pokemon_x, pokemon_y)
+# print(merged_teammates)
+```
+
+```{r}
+excluded_x <- pokemon_x %>% 
+  filter(is.na(pokemon_species_id)) %>% 
+  distinct(Name)
+excluded_y <- pokemon_y %>% 
+  filter(is.na(teammate_species_id)) %>% 
+  distinct(Teammate)
+
+print(excluded_x)
+print(excluded_y)
+
+# Function to fetch excluded Pokémon data
+fetch_excluded_pokemon <- function(name) {
+  # Format the name to match PokeAPI naming conventions
+  name_formatted <- gsub(" ", "-", tolower(name))
+  url <- paste0("https://pokeapi.co/api/v2/pokemon/", name_formatted)
+  
+  response <- GET(url)
+  if (status_code(response) == 200) {
+    data <- content(response, as = "parsed", type = "application/json")
+    types <- data$types
+    type1 <- ifelse(length(types) > 0, types[[1]]$type$name, "None")
+    type2 <- ifelse(length(types) > 1, types[[2]]$type$name, "None")
+    return(data.frame(
+      Name = name,
+      pokemon_species_id = data$id,
+      type1 = type1,
+      type2 = type2,
+      stringsAsFactors = FALSE
+    ))
+  } else {
+    print(paste("Failed to fetch data for", name))
+    return(data.frame(
+      Name = name,
+      id = NA,
+      type1 = NA,
+      type2 = NA,
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+```
+
+```{r}
+# Add missing type data and/or ids for excluded Pokemon
+
+# NOTE: Most names are excluded due to naming conventions with regional or 
+# special forms or missing csv data and can be obtained automatically when running the 
+# fetch_excluded_pokemon function, but some naming conventions do not match 
+# between the Pokemon API and Smogon data, and will thus require a manual change 
+# to match the name in "https://pokeapi.co/api/v2/pokemon/" by applying the below code:
+
+# Manually change the names of Pokemon in dataframe to match Pokemon API names 
+excluded_x <- excluded_x %>%
+  mutate(
+    # Change names of all Pokemon with different Smogon/Pokemon API names
+    # Format: Name = ifelse(Name == excluded_pkmn Name, PokemonAPI Name, Name)
+    Name = ifelse(Name == "Ogerpon-Wellspring", "Ogerpon-Wellspring-Mask", Name),
+    Name = ifelse(Name == "Ogerpon-Cornerstone", "Ogerpon-Cornerstone-Mask", Name),
+    Name = ifelse(Name == "Basculegion-F", "Basculegion-Female", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Blaze", "Tauros-Paldea-Blaze-Breed", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Aqua", "Tauros-Paldea-Aqua-Breed", Name),
+    Name = ifelse(Name == "Indeedee-F", "Indeedee-Female", Name)
+  )
+excluded_y <- excluded_y %>%
+  rename(Name = Teammate) %>%
+  mutate(
+    # Change names of all Pokemon with different Smogon/Pokemon API names
+    # Format: Name = ifelse(Name == excluded_pkmn Name, PokemonAPI Name, Name)
+    Name = ifelse(Name == "Ogerpon-Wellspring", "Ogerpon-Wellspring-Mask", Name),
+    Name = ifelse(Name == "Ogerpon-Cornerstone", "Ogerpon-Cornerstone-Mask", Name),
+    Name = ifelse(Name == "Basculegion-F", "Basculegion-Female", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Blaze", "Tauros-Paldea-Blaze-Breed", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Aqua", "Tauros-Paldea-Aqua-Breed", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Combat", "Tauros-Paldea-Combat-Breed", Name),
+    Name = ifelse(Name == "Indeedee-F", "Indeedee-Female", Name),
+    Name = ifelse(Name == "Oinkologne-F", "Oinkologne-Female", Name),
+    Name = ifelse(Name == "Oricorio-Pa'u", "Oricorio-Pau", Name)
+  )
+
+# Fetch type data for each excluded Pokémon name
+excluded_x <- lapply(excluded_x$Name, fetch_excluded_pokemon)
+excluded_x <- bind_rows(excluded_x)
+
+excluded_y <- lapply(excluded_y$Name, fetch_excluded_pokemon)
+excluded_y <- bind_rows(excluded_y)
+
+# Convert names back to Smogon names
+excluded_x <- excluded_x %>% 
+  mutate(
+    Name = ifelse(Name == "Ogerpon-Wellspring-Mask","Ogerpon-Wellspring", Name),
+    Name = ifelse(Name == "Ogerpon-Cornerstone-Mask", "Ogerpon-Cornerstone", Name),
+    Name = ifelse(Name == "Basculegion-Female", "Basculegion-F", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Blaze-Breed", "Tauros-Paldea-Blaze", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Aqua-Breed", "Tauros-Paldea-Aqua", Name),
+    Name = ifelse(Name == "Indeedee-Female", "Indeedee-F", Name)
+  )
+excluded_y <- excluded_y %>%
+  mutate(
+    # Change names of all Pokemon with different Smogon/Pokemon API names
+    # Format: Name = ifelse(Name == excluded_pkmn Name, PokemonAPI Name, Name)
+    Name = ifelse(Name == "Ogerpon-Wellspring-Mask", "Ogerpon-Wellspring", Name),
+    Name = ifelse(Name == "Ogerpon-Cornerstone-Mask", "Ogerpon-Cornerstone", Name),
+    Name = ifelse(Name == "Basculegion-Female", "Basculegion-F", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Blaze-Breed", "Tauros-Paldea-Blaze", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Aqua-Breed", "Tauros-Paldea-Aqua", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Combat-Breed", "Tauros-Paldea-Combat", Name),
+    Name = ifelse(Name == "Indeedee-Female", "Indeedee-F", Name),
+    Name = ifelse(Name == "Oinkologne-Female", "Oinkologne-F", Name),
+    Name = ifelse(Name == "Oricorio-Pau", "Oricorio-Pa'u", Name)
+  ) %>%
+  rename(Teammate = Name,
+         teammate_species_id = pokemon_species_id,
+         teammate_type1 = type1,
+         teammate_type2 = type2) %>%
+  select(-id)
+
+# Check to see if pokemon_species_id, type1, and type2 have been added to excluded Pokemon names
+excluded_x <- excluded_x %>%
+  mutate(type1 = case_when(
+      type1 == "normal" ~ 1,
+      type1 == "fighting" ~ 2,
+      type1 == "flying" ~ 3,
+      type1 == "poison" ~ 4,
+      type1 == "ground" ~ 5,
+      type1 == "rock" ~ 6,
+      type1 == "bug" ~ 7,
+      type1 == "ghost" ~ 8,
+      type1 == "steel" ~ 9,
+      type1 == "fire" ~ 10,
+      type1 == "water" ~ 11,
+      type1 == "grass" ~ 12,
+      type1 == "electric" ~ 13,
+      type1 == "psychic" ~ 14,
+      type1 == "ice" ~ 15,
+      type1 == "dragon" ~ 16,
+      type1 == "dark" ~ 17,
+      type1 == "fairy" ~ 18,
+      type1 == "stellar" ~ 19),
+    type2 = case_when(
+      type2 == "normal" ~ 1,
+      type2 == "fighting" ~ 2,
+      type2 == "flying" ~ 3,
+      type2 == "poison" ~ 4,
+      type2 == "ground" ~ 5,
+      type2 == "rock" ~ 6,
+      type2 == "bug" ~ 7,
+      type2 == "ghost" ~ 8,
+      type2 == "steel" ~ 9,
+      type2 == "fire" ~ 10,
+      type2 == "water" ~ 11,
+      type2 == "grass" ~ 12,
+      type2 == "electric" ~ 13,
+      type2 == "psychic" ~ 14,
+      type2 == "ice" ~ 15,
+      type2 == "dragon" ~ 16,
+      type2 == "dark" ~ 17,
+      type2 == "fairy" ~ 18,
+      type2 == "stellar" ~ 19))
+excluded_y <- excluded_y %>%
+  mutate(teammate_type1 = case_when(
+      teammate_type1 == "normal" ~ 1,
+      teammate_type1 == "fighting" ~ 2,
+      teammate_type1 == "flying" ~ 3,
+      teammate_type1 == "poison" ~ 4,
+      teammate_type1 == "ground" ~ 5,
+      teammate_type1 == "rock" ~ 6,
+      teammate_type1 == "bug" ~ 7,
+      teammate_type1 == "ghost" ~ 8,
+      teammate_type1 == "steel" ~ 9,
+      teammate_type1 == "fire" ~ 10,
+      teammate_type1 == "water" ~ 11,
+      teammate_type1 == "grass" ~ 12,
+      teammate_type1 == "electric" ~ 13,
+      teammate_type1 == "psychic" ~ 14,
+      teammate_type1 == "ice" ~ 15,
+      teammate_type1 == "dragon" ~ 16,
+      teammate_type1 == "dark" ~ 17,
+      teammate_type1 == "fairy" ~ 18,
+      teammate_type1 == "stellar" ~ 19),
+    teammate_type2 = case_when(
+      teammate_type2 == "normal" ~ 1,
+      teammate_type2 == "fighting" ~ 2,
+      teammate_type2 == "flying" ~ 3,
+      teammate_type2 == "poison" ~ 4,
+      teammate_type2 == "ground" ~ 5,
+      teammate_type2 == "rock" ~ 6,
+      teammate_type2 == "bug" ~ 7,
+      teammate_type2 == "ghost" ~ 8,
+      teammate_type2 == "steel" ~ 9,
+      teammate_type2 == "fire" ~ 10,
+      teammate_type2 == "water" ~ 11,
+      teammate_type2 == "grass" ~ 12,
+      teammate_type2 == "electric" ~ 13,
+      teammate_type2 == "psychic" ~ 14,
+      teammate_type2 == "ice" ~ 15,
+      teammate_type2 == "dragon" ~ 16,
+      teammate_type2 == "dark" ~ 17,
+      teammate_type2 == "fairy" ~ 18,
+      teammate_type2 == "stellar" ~ 19))
+
+excluded_x
+excluded_y
+
+# excluded_data_pokemon <- excluded_data %>%
+#   rename(pokemon_type1 = type1,
+#          pokemon_type2 = type2)
+# 
+# excluded_data_teammate <- excluded_data %>%
+#   rename(teammate_species_id = pokemon_species_id,
+#          teammate_type1 = type1,
+#          teammate_type2 = type2)
+
+```
+
+```{r}
+# Add excluded Pokemon id and typing data to dataframe
+pokemon_x <- pokemon_x %>%
+  left_join(excluded_x, by = c("Name" = "Name")) %>%
+  mutate(
+    pokemon_species_id = coalesce(pokemon_species_id.y, pokemon_species_id.x),  # Use excluded_data if not NA, else use original
+    type1 = ifelse(is.na(type1.y), type1.x, type1.y),  # Use excluded_data if not NA, else use original
+    type2 = ifelse(is.na(type2.y), type2.x, type2.y)   # Use excluded_data if not NA, else use original
+  ) %>%
+  select(-pokemon_species_id.x, -pokemon_species_id.y,
+         -type1.x, -type1.y,
+         -type2.x, -type2.y)
+
+pokemon_y <- pokemon_y %>%
+  left_join(excluded_y, by = c("Teammate" = "Teammate")) %>%
+  mutate(
+    teammate_species_id = coalesce(teammate_species_id.y, teammate_species_id.x),  # Use excluded_data if not NA, else use original
+    teammate_type1 = ifelse(is.na(teammate_type1.y), teammate_type1.x, teammate_type1.y),  # Use excluded_data if not NA, else use original
+    teammate_type2 = ifelse(is.na(teammate_type2.y), teammate_type2.x, teammate_type2.y)   # Use excluded_data if not NA, else use original
+  ) %>%
+  select(-teammate_species_id.x, -teammate_species_id.y,
+         -teammate_type1.x, -teammate_type1.y,
+         -teammate_type2.x, -teammate_type2.y)
+
+dim(pokemon_x)
+dim(pokemon_y)
+merged_teammates <- cbind(pokemon_x, pokemon_y, teammate_usage)
+dim(merged_teammates)
+merged_teammates <- merged_teammates %>%
+  filter(! Teammate == "empty")
+
+dim(merged_teammates)
+print(merged_teammates %>% filter(is.na(pokemon_species_id) | is.na(teammate_species_id)))
+merged_teammates
+print(merged_teammates %>% filter(is.na(type1) | is.na(teammate_type1)))
+
+# print(merged_teammates %>% filter(is.na(pokemon_typing) | is.na(teammate_typing)))
+```
+
+
+```{r}
+
+# Print the resulting merged data frame
+print(merged_teammates)
+print(merged_teammates %>% filter(is.na(type1)) %>% distinct(Name))
+print(merged_teammates %>% filter(is.na(teammate_type1)) %>% distinct(Name))
+
+
+
+# Filter dataframe to relevant columns, transform columns for ease of understanding
+filtered_teammates <- merged_teammates %>%
+  mutate(type1 = case_when(
+      type1 == 1 ~ "normal",
+      type1 == 2 ~ "fighting",
+      type1 == 3 ~ "flying",
+      type1 == 4 ~ "poison",
+      type1 == 5 ~ "ground",
+      type1 == 6 ~ "rock",
+      type1 == 7 ~ "bug",
+      type1 == 8 ~ "ghost",
+      type1 == 9 ~ "steel",
+      type1 == 10 ~ "fire",
+      type1 == 11 ~ "water",
+      type1 == 12 ~ "grass",
+      type1 == 13 ~ "electric",
+      type1 == 14 ~ "psychic",
+      type1 == 15 ~ "ice",
+      type1 == 16 ~ "dragon",
+      type1 == 17 ~ "dark",
+      type1 == 18 ~ "fairy",
+      type1 == 19 ~ "stellar"),
+    type2 = case_when(
+      type2 == 1 ~ "normal",
+      type2 == 2 ~ "fighting",
+      type2 == 3 ~ "flying",
+      type2 == 4 ~ "poison",
+      type2 == 5 ~ "ground",
+      type2 == 6 ~ "rock",
+      type2 == 7 ~ "bug",
+      type2 == 8 ~ "ghost",
+      type2 == 9 ~ "steel",
+      type2 == 10 ~ "fire",
+      type2 == 11 ~ "water",
+      type2 == 12 ~ "grass",
+      type2 == 13 ~ "electric",
+      type2 == 14 ~ "psychic",
+      type2 == 15 ~ "ice",
+      type2 == 16 ~ "dragon",
+      type2 == 17 ~ "dark",
+      type2 == 18 ~ "fairy",
+      type2 == 19 ~ "stellar"),
+    teammate_type1 = case_when(
+      teammate_type1 == 1 ~ "normal",
+      teammate_type1 == 2 ~ "fighting",
+      teammate_type1 == 3 ~ "flying",
+      teammate_type1 == 4 ~ "poison",
+      teammate_type1 == 5 ~ "ground",
+      teammate_type1 == 6 ~ "rock",
+      teammate_type1 == 7 ~ "bug",
+      teammate_type1 == 8 ~ "ghost",
+      teammate_type1 == 9 ~ "steel",
+      teammate_type1 == 10 ~ "fire",
+      teammate_type1 == 11 ~ "water",
+      teammate_type1 == 12 ~ "grass",
+      teammate_type1 == 13 ~ "electric",
+      teammate_type1 == 14 ~ "psychic",
+      teammate_type1 == 15 ~ "ice",
+      teammate_type1 == 16 ~ "dragon",
+      teammate_type1 == 17 ~ "dark",
+      teammate_type1 == 18 ~ "fairy",
+      teammate_type1 == 19 ~ "stellar"),
+    teammate_type2 = case_when(
+      teammate_type2 == 1 ~ "normal",
+      teammate_type2 == 2 ~ "fighting",
+      teammate_type2 == 3 ~ "flying",
+      teammate_type2 == 4 ~ "poison",
+      teammate_type2 == 5 ~ "ground",
+      teammate_type2 == 6 ~ "rock",
+      teammate_type2 == 7 ~ "bug",
+      teammate_type2 == 8 ~ "ghost",
+      teammate_type2 == 9 ~ "steel",
+      teammate_type2 == 10 ~ "fire",
+      teammate_type2 == 11 ~ "water",
+      teammate_type2 == 12 ~ "grass",
+      teammate_type2 == 13 ~ "electric",
+      teammate_type2 == 14 ~ "psychic",
+      teammate_type2 == 15 ~ "ice",
+      teammate_type2 == 16 ~ "dragon",
+      teammate_type2 == 17 ~ "dark",
+      teammate_type2 == 18 ~ "fairy",
+      teammate_type2 == 19 ~ "stellar")) %>%
+  mutate(pokemon_typing = if_else(is.na(type2), type1, paste(type1, type2, sep = "/")),
+         teammate_typing = if_else(is.na(teammate_type2), teammate_type1, paste(teammate_type1, teammate_type2, sep = "/")))
+
+# Eliminate duplicate rows if they exist
+filtered_teammates <- distinct(filtered_teammates)
+# Print dataframe head
+head(filtered_teammates)
+
+# print(filtered_teammates %>% filter(is.na(pokemon_typing)) %>% distinct(Name))
+# print(filtered_teammates %>% filter(is.na(teammate_typing)) %>% distinct(Teammate))
+```
+
+```{r}
+pokemon_teammate_data <- filtered_teammates %>%
+  select(Name, pokemon_species_id, pokemon_typing, Teammate, Teammate_Usage, teammate_species_id, teammate_typing)
+
+pokemon_teammate_data %>%
+  arrange(desc(Teammate_Usage))
+```
+
+```{r}
+pokemon_teammate_data %>% 
+  filter(Name == "Great Tusk") %>% 
+  arrange(desc(Teammate_Usage))
+```
+
+
+```{r}
+# # Create a dataframe where each row represents a team with up to 5 teammates
+# team_df <- teammates_df %>%
+#   group_by(Name) %>%
+#   summarize(Teammates = list(Teammate)) %>%
+#   unnest_wider(Teammates, names_sep = "_") %>%
+#   mutate(across(everything(), ~replace_na(., "None")))
+# 
+# # Convert all teammate columns to factors
+# teammate_cols <- colnames(team_df)[grepl("^Teammates_", colnames(team_df))]
+# team_df[all_of(teammate_cols)] <- lapply(team_df[all_of(teammate_cols)], factor)
+# 
+# # One-hot encode the teammate columns
+# team_df_ohe <- team_df %>%
+#   pivot_longer(cols = all_of(teammate_cols), names_to = "Teammate_Position", values_to = "Teammate") %>%
+#   mutate(Teammate = as.character(Teammate)) %>%
+#   pivot_wider(names_from = Teammate, values_from = Teammate, values_fill = list(Teammate = 0), values_fn = list(Teammate = length)) %>%
+#   mutate(across(everything(), ~ ifelse(. == 0, 0, 1)))
+# 
+# # Convert 'Name' column to factor
+# team_df_ohe$Name <- as.factor(team_df_ohe$Name)
+# 
+# # Save the column names used for training
+# teammate_columns <- colnames(team_df_ohe %>% select(-Name))
+# 
+# # Create features (X) and targets (Y)
+# X_teams <- team_df_ohe %>% select(-Name)
+# y_teams <- as.numeric(factor(team_df_ohe$Name)) - 1
+
+```
+
+```{r}
+# # Convert features to a matrix
+# X_teams_matrix <- as.matrix(X_teams)
+# 
+# # Train the XGBoost model
+# dtrain <- xgb.DMatrix(data = X_teams_matrix, label = y_teams)
+# params <- list(
+#   objective = "multi:softprob",
+#   num_class = length(unique(y_teams)),
+#   eval_metric = "mlogloss"
+# )
+# 
+# team_xgb_model <- xgboost(params = params, data = dtrain, nrounds = 100, verbose = 1)
+```
+

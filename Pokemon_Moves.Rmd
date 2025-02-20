@@ -17,7 +17,7 @@ library(readr)
 library(stringr)
 
 # Extract JSON data from chosen tier and time
-json_url <- "https://www.smogon.com/stats/2024-05/chaos/gen9ou-1695.json"
+json_url <- "https://www.smogon.com/stats/2025-01/chaos/gen9ou-1695.json"
 json_data <- fromJSON(json_url)
 pkmn_data <- json_data$data
 ```
@@ -275,7 +275,9 @@ excluded_pkmn <- excluded_pkmn %>%
     Name = ifelse(Name == "Ogerpon-Wellspring", "Ogerpon-Wellspring-Mask", Name),
     Name = ifelse(Name == "Ogerpon-Cornerstone", "Ogerpon-Cornerstone-Mask", Name),
     Name = ifelse(Name == "Basculegion-F", "Basculegion-Female", Name),
-    Name = ifelse(Name == "Tauros-Paldea-Blaze", "Tauros-Paldea-Blaze-Breed", Name)
+    Name = ifelse(Name == "Tauros-Paldea-Blaze", "Tauros-Paldea-Blaze-Breed", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Aqua", "Tauros-Paldea-Aqua-Breed", Name),
+    Name = ifelse(Name == "Indeedee-F", "Indeedee-Female", Name)
   )
 
 # Fetch type data for each excluded Pokémon name
@@ -288,7 +290,9 @@ excluded_data <- excluded_data %>%
     Name = ifelse(Name == "Ogerpon-Wellspring-Mask","Ogerpon-Wellspring", Name),
     Name = ifelse(Name == "Ogerpon-Cornerstone-Mask", "Ogerpon-Cornerstone", Name),
     Name = ifelse(Name == "Basculegion-Female", "Basculegion-F", Name),
-    Name = ifelse(Name == "Tauros-Paldea-Blaze-Breed", "Tauros-Paldea-Blaze", Name)
+    Name = ifelse(Name == "Tauros-Paldea-Blaze-Breed", "Tauros-Paldea-Blaze", Name),
+    Name = ifelse(Name == "Tauros-Paldea-Aqua-Breed", "Tauros-Paldea-Aqua", Name),
+    Name = ifelse(Name == "Indeedee-Female", "Indeedee-F", Name)
   )
 
 # Check to see if pokemon_species_id, type1, and type2 have been added to excluded Pokemon names
@@ -354,4 +358,27 @@ pokemon_move_data %>%
   arrange(desc(Move_Usage)) %>%
   head(20)
 ```
+
+```{r}
+# Function to return move usage information for a single pokemon
+get_move_data <- function(pokemon_name) {
+  
+  if (is.character(pokemon_name) == FALSE){
+    return("ERROR: Pokemon name must be a string of characters")
+  }
+  
+  return_data <- pokemon_move_data %>%
+    filter(Name == pokemon_name) %>%
+    arrange(desc(Move_Usage))
+  
+  if (nrow(return_data) == 0){
+    return("Pokemon name could not be found, please try again")
+  }
+  
+  print(return_data)
+}
+
+get_move_data("Serperior")
+```
+
 
